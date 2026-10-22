@@ -1,0 +1,348 @@
+{
+  "application": "VisionGuard AI 1.0.0",
+  "automated_tests": {
+    "passed": 97,
+    "failed": 0,
+    "hardware_mocking": "All lock, camera and Office command tests use mocks; real model blank-frame inference and DPAPI roundtrip are separate safe integration checks."
+  },
+  "real_hardware_release_verification": "Not performed. Do not call this fully verified.",
+  "features": [
+    {
+      "feature": "Camera consent and setup wizard",
+      "implemented": "Yes",
+      "automated_tests": "Passed",
+      "real_windows_testing": "Not performed",
+      "known_limitations": "Windows desktop camera permission must also be enabled",
+      "remaining_manual_verification": [
+        "M01"
+      ]
+    },
+    {
+      "feature": "Multi-angle face enrollment and quality checks",
+      "implemented": "Yes",
+      "automated_tests": "Passed (synthetic samples and quality inputs)",
+      "real_windows_testing": "Not performed",
+      "known_limitations": "Quality thresholds need camera-specific validation",
+      "remaining_manual_verification": [
+        "M02",
+        "M03",
+        "M07"
+      ]
+    },
+    {
+      "feature": "YuNet face detection and SFace CPU embeddings",
+      "implemented": "Yes",
+      "automated_tests": "Passed (real models and blank-frame inference)",
+      "real_windows_testing": "Passed (safe model initialization on Windows); real faces not performed",
+      "known_limitations": "No positive-face accuracy benchmark or demographic evaluation",
+      "remaining_manual_verification": [
+        "M02",
+        "M04",
+        "M05"
+      ]
+    },
+    {
+      "feature": "Identity matching, uncertainty rejection and consecutive verification",
+      "implemented": "Yes",
+      "automated_tests": "Passed",
+      "real_windows_testing": "Not performed",
+      "known_limitations": "Default threshold is a starting point, not a calibrated false-acceptance rate",
+      "remaining_manual_verification": [
+        "M04",
+        "M05"
+      ]
+    },
+    {
+      "feature": "Randomized head-turn liveness",
+      "implemented": "Yes",
+      "automated_tests": "Passed (sequence, expiry, stationary pose and dropout tests)",
+      "real_windows_testing": "Not performed",
+      "known_limitations": "Basic RGB heuristic; replay, movable images and sophisticated spoofing can pass",
+      "remaining_manual_verification": [
+        "M06",
+        "M09"
+      ]
+    },
+    {
+      "feature": "Local encrypted settings, biometrics and recovery authorization",
+      "implemented": "Yes",
+      "automated_tests": "Passed (including actual Windows DPAPI)",
+      "real_windows_testing": "Passed (DPAPI only); interactive authorization not performed",
+      "known_limitations": "Same-account code can decrypt DPAPI data or terminate the process; passphrase recovery requires account-level procedures",
+      "remaining_manual_verification": [
+        "M07",
+        "M27",
+        "M30"
+      ]
+    },
+    {
+      "feature": "Authorized owner absence and unknown replacement detection",
+      "implemented": "Yes",
+      "automated_tests": "Passed (state machine and connected mocked worker pipeline)",
+      "real_windows_testing": "Not performed",
+      "known_limitations": "Depends on camera quality, recognition threshold and successful liveness",
+      "remaining_manual_verification": [
+        "M08",
+        "M09",
+        "M10",
+        "M11"
+      ]
+    },
+    {
+      "feature": "Multiple-face relaxed and strict privacy policies",
+      "implemented": "Yes",
+      "automated_tests": "Passed",
+      "real_windows_testing": "Not performed",
+      "known_limitations": "Gestures always suspend with multiple visible faces; liveness renewal requires one face",
+      "remaining_manual_verification": [
+        "M12"
+      ]
+    },
+    {
+      "feature": "Actual Windows LockWorkStation adapter and simulation mode",
+      "implemented": "Yes",
+      "automated_tests": "Passed (mocked API only; no real lock)",
+      "real_windows_testing": "Not performed",
+      "known_limitations": "No unlocking or credential-provider integration; simulation latches until authorized reset",
+      "remaining_manual_verification": [
+        "M10",
+        "M15"
+      ]
+    },
+    {
+      "feature": "Camera reconnect, blocked/frozen feed handling and failure policy",
+      "implemented": "Yes",
+      "automated_tests": "Passed (mocked capture and policy)",
+      "real_windows_testing": "Not performed",
+      "known_limitations": "Exact-static feeds may cause false freeze alerts; native drivers may block",
+      "remaining_manual_verification": [
+        "M13",
+        "M14"
+      ]
+    },
+    {
+      "feature": "Left and right L, fist and normalized pinch recognition",
+      "implemented": "Yes",
+      "automated_tests": "Passed (synthetic geometry; actual Hand Landmarker blank inference)",
+      "real_windows_testing": "Not performed with real hands",
+      "known_limitations": "Rule-based confidence is not a calibrated probability; occlusion and hand pose affect recognition",
+      "remaining_manual_verification": [
+        "M18",
+        "M19",
+        "M20"
+      ]
+    },
+    {
+      "feature": "Handedness calibration and mirrored-preview handling",
+      "implemented": "Yes",
+      "automated_tests": "Passed",
+      "real_windows_testing": "Not performed",
+      "known_limitations": "Camera mirroring and individual hand poses require real calibration",
+      "remaining_manual_verification": [
+        "M18"
+      ]
+    },
+    {
+      "feature": "Gesture debounce, cooldown, confidence and neutral rearming",
+      "implemented": "Yes",
+      "automated_tests": "Passed",
+      "real_windows_testing": "Not performed",
+      "known_limitations": "No-hand frames do not rearm; neutral hand must be visible",
+      "remaining_manual_verification": [
+        "M19",
+        "M20"
+      ]
+    },
+    {
+      "feature": "Fresh verified-owner gate and foreground application cancellation",
+      "implemented": "Yes",
+      "automated_tests": "Passed",
+      "real_windows_testing": "Not performed",
+      "known_limitations": "Hands cannot be biometrically attributed to an owner; native COM calls cannot be made atomic with foreground changes",
+      "remaining_manual_verification": [
+        "M12",
+        "M24"
+      ]
+    },
+    {
+      "feature": "PowerPoint navigation, boundaries and slideshow-only exit",
+      "implemented": "Yes",
+      "automated_tests": "Passed (mocked COM)",
+      "real_windows_testing": "Not performed",
+      "known_limitations": "Custom-show navigation refused; Presenter View and multi-instance matching may conservatively refuse commands",
+      "remaining_manual_verification": [
+        "M19",
+        "M20",
+        "M21"
+      ]
+    },
+    {
+      "feature": "Word page scrolling, pause/toggle and cursor preservation",
+      "implemented": "Yes",
+      "automated_tests": "Passed (mocked COM)",
+      "real_windows_testing": "Not performed",
+      "known_limitations": "Exact pages in Print/Web layouts; one screen in Read Mode; Draft/Outline show guidance",
+      "remaining_manual_verification": [
+        "M22",
+        "M23"
+      ]
+    },
+    {
+      "feature": "Editable per-application gesture mappings",
+      "implemented": "Yes",
+      "automated_tests": "Passed (defaults and mapping validation)",
+      "real_windows_testing": "Not performed",
+      "known_limitations": "Global gesture disable must be restored in UI/tray, not by a gesture",
+      "remaining_manual_verification": [
+        "M23"
+      ]
+    },
+    {
+      "feature": "Eight-page dark GUI, preview, overlays and status indicators",
+      "implemented": "Yes",
+      "automated_tests": "Passed (offscreen construction/navigation and visual render)",
+      "real_windows_testing": "Offscreen Windows render passed; interactive camera UI not performed",
+      "known_limitations": "Real display scaling and interactive workflow require manual review",
+      "remaining_manual_verification": [
+        "M01",
+        "M02",
+        "M18",
+        "M26"
+      ]
+    },
+    {
+      "feature": "Tray and minimized background monitoring",
+      "implemented": "Yes",
+      "automated_tests": "Passed (GUI construction and mocked worker loop)",
+      "real_windows_testing": "Not performed",
+      "known_limitations": "Regular desktop process; cannot monitor if process is terminated or entire GUI process hangs",
+      "remaining_manual_verification": [
+        "M26",
+        "M27"
+      ]
+    },
+    {
+      "feature": "Optional Windows per-user startup",
+      "implemented": "Yes",
+      "automated_tests": "Passed (mocked registry; source/frozen command quoting)",
+      "real_windows_testing": "Not performed; registry was not changed",
+      "known_limitations": "Runs only after user sign-in; install paths must remain valid",
+      "remaining_manual_verification": [
+        "M28"
+      ]
+    },
+    {
+      "feature": "Locked-session suppression and sleep/stall invalidation",
+      "implemented": "Yes",
+      "automated_tests": "Passed (mocked desktop API and watchdog)",
+      "real_windows_testing": "Not performed",
+      "known_limitations": "Secure desktop query is conservative; resume may require prompt verification or trigger absence lock",
+      "remaining_manual_verification": [
+        "M16",
+        "M17"
+      ]
+    },
+    {
+      "feature": "Capture/inference watchdog, worker cleanup and COM error handling",
+      "implemented": "Yes",
+      "automated_tests": "Passed (mocked failures and connected orchestration)",
+      "real_windows_testing": "Not performed",
+      "known_limitations": "Native driver/COM hangs and whole-process crashes need manual recovery; in-process watchdog cannot rescue a dead process",
+      "remaining_manual_verification": [
+        "M13",
+        "M25",
+        "M29",
+        "M30"
+      ]
+    },
+    {
+      "feature": "Rotating diagnostics, no raw-frame retention and biometric deletion",
+      "implemented": "Yes",
+      "automated_tests": "Passed (storage/deletion checks; GUI construction)",
+      "real_windows_testing": "Not performed interactively",
+      "known_limitations": "Backups and SSD history may retain older encrypted copies; Python memory cannot guarantee zeroization",
+      "remaining_manual_verification": [
+        "M02",
+        "M07",
+        "M30"
+      ]
+    },
+    {
+      "feature": "Offline pinned model setup and portable PyInstaller executable",
+      "implemented": "Yes",
+      "automated_tests": "Passed (checksums, source/frozen safe self-tests and GUI smoke checks)",
+      "real_windows_testing": "Passed (safe executable diagnostics on development Windows); other-PC test not performed",
+      "known_limitations": "Unsigned one-folder distribution; not an installer; LGPL and model notices must accompany redistribution",
+      "remaining_manual_verification": [
+        "M31"
+      ]
+    },
+    {
+      "feature": "CPU scheduling and presentation performance",
+      "implemented": "Yes",
+      "automated_tests": "Passed (bounded mocked worker flow); FPS/long-run performance not measured",
+      "real_windows_testing": "Not performed",
+      "known_limitations": "Capture/preview/inference rates are targets dependent on hardware and workload",
+      "remaining_manual_verification": [
+        "M29"
+      ]
+    },
+    {
+      "feature": "Configurable authentication hysteresis and benign-dropout grace",
+      "implemented": "Yes",
+      "automated_tests": "Passed: acquisition/retention, grace, true absence, clear unknown rejection and continuous liveness",
+      "real_windows_testing": "Enrollment aggregate integrity inspected; physical movement accuracy pending",
+      "known_limitations": "Grace temporarily retains recent authentication, including brief zero-face observations; thresholds are not population calibrated",
+      "remaining_manual_verification": [
+        "M04",
+        "M05",
+        "M08",
+        "M09",
+        "M10",
+        "M11"
+      ]
+    },
+    {
+      "feature": "Central versioned application state and stale-result rejection",
+      "implemented": "Yes",
+      "automated_tests": "Passed: concurrent publication, capture watermarks, command epochs, replaced-worker GUI revision checks",
+      "real_windows_testing": "Interactive race/sleep testing pending",
+      "known_limitations": "In-process state cannot survive whole-process death",
+      "remaining_manual_verification": [
+        "M16",
+        "M17",
+        "M29"
+      ]
+    },
+    {
+      "feature": "Process-aware Office inventory and traceable gesture events",
+      "implemented": "Yes",
+      "automated_tests": "Passed: background/editor/slideshow, process identity, COM errors, multimonitor target, event dispatch and STA lifecycle mocks",
+      "real_windows_testing": "Read-only installed/process inventory passed; actual gesture commands pending",
+      "known_limitations": "Multiple instances/custom shows/native COM stalls still require laptop tests",
+      "remaining_manual_verification": [
+        "M19",
+        "M20",
+        "M21",
+        "M22",
+        "M23",
+        "M24",
+        "M25"
+      ]
+    },
+    {
+      "feature": "Independent bounded face inference and Developer Diagnostics",
+      "implemented": "Yes",
+      "automated_tests": "Passed: latest-only mailbox, model exception recovery, stale inputs and GUI construction",
+      "real_windows_testing": "Long-run FPS/CPU and optional diagnostics UX pending",
+      "known_limitations": "Native model calls cannot safely be killed from Python",
+      "remaining_manual_verification": [
+        "M08",
+        "M29",
+        "M30"
+      ]
+    }
+  ],
+  "stability_repair_record": "STABILITY_REPAIR.md",
+  "stability_repair_automated_tests": 137
+}

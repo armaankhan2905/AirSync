@@ -1,0 +1,45 @@
+# Design and security boundaries
+
+## Threads and data flow
+
+The Qt main thread owns every widget. `VisionWorker` remains the QThread orchestrator and runs hand inference. Face inference now runs independently in `FaceInferenceWorker`, which owns its OpenCV models and has a one-item pending-frame mailbox and result slot. Capture retains its dedicated thread and latest-frame slot. Camera capture requests 640×480 at 30 FPS; hands target up to 20 Hz and faces 5 Hz. OpenCV uses at most two internal threads to avoid oversubscribing MediaPipe. A slow face call cannot block hand tracking. These are scheduling targets, not hardware performance guarantees.
+
+The GUI polls the current worker's `StateManager` snapshot and latest copied QImage at 10 Hz. Preview images replace one slot; they do not accumulate in a Qt signal queue. Each snapshot has a monotonically increasing revision, capture timestamp and worker identity. The UI rejects older revisions or replaced workers. Late face results cannot replace a newer camera-error/watchdog/context decision. The optional Developer Diagnostics panel displays only sanitized state metadata.
+
+`OfficeWorker` initializes `CoInitializeEx(COINIT_APARTMENTTHREADED)`, owns all COM access and uninitializes on that same thread. It only connects to running servers with `GetActiveObject`. Process enumeration identifies POWERPNT.EXE and WINWORD.EXE independently of foreground class/title. Registry App Paths indicate installation; HWND/PID/executable and COM collections distinguish running editor, document and slideshow states. Window titles are never retained or logged. A single slideshow can be selected on another monitor while a PowerPoint presenter/editor window has focus; multiple shows require a matching foreground slideshow.
+
+Immutable gesture events carry gesture, anatomical hand, confidence, monotonic timestamp, stable/authorized flags, authentication epoch, target and intended action. The one-item command queue reports overflow. Before each action, the Office thread refreshes discovery, verifies target/focus, authentication epoch, confidence/hand consistency, allowed command and an 800 ms expiry. Commands and failures have explicit results. No keys are injected and no unrelated application receives actions.
+
+Presence policy is deterministic and monotonic-time based. The main-thread watchdog also evaluates a failed-camera observation when inference stops reporting progress for two seconds. A lock guards shared policy decisions. Camera and inference errors cannot become successful verification. All real lock calls are centralized in `LockManager`; automated tests inject a mock or force simulation. The application never invokes an unlock API.
+
+## Identity and enrollment
+
+YuNet detects all faces, and SFace aligns each face by its five landmarks and generates a 128-dimensional embedding. Detection, feature extraction, face quality and matching use real OpenCV CPU inference, not placeholders. Match score is the mean of the two strongest enrolled cosine similarities, checked against threshold plus a rejection margin. One favorable sample alone cannot authorize the user. Quality rejects clipped/small faces, implausible landmarks, low or overexposed lighting, blur and very narrow eye spacing. All these limits are heuristic and need camera-specific validation.
+
+Enrollment requires exactly one face, at least six samples, frontal and both turned poses, and a randomized challenge. Samples per pose are capped at four so lingering in one pose cannot fill the sample budget. A strong identity change clears captured samples. Vectors are stored, frames are not. Replacing/deleting an existing enrollment requires the application passphrase. Configuration or enrollment corruption fails startup without overwriting data.
+
+The liveness check requests randomized turns to both sides and center, with two consecutive observations per step and a 20-second deadline. Fresh owner matches renew a completed 60-second lease; continuously present owners no longer have to repeat it every minute. Sustained identity loss, camera failure, pause and session changes reset it. Brief dropouts can retain the lease for the configurable verification grace. Unknown faces never renew presence or reset the absence timer. An incomplete challenge resets on identity mismatch. Multiple faces cannot complete a challenge. This is basic RGB liveness, not independently evaluated presentation-attack detection; replay and sophisticated spoofs remain limitations.
+
+## Presence and gesture policy
+
+`StateManager` owns the synchronized presence policy used by the GUI and dispatcher. Acquisition still requires the default 0.53 cosine cutoff and three consecutive matching/liveness-approved observations. While verified, the default 0.03 hysteresis allows retention at 0.50. A configurable default 1.2-second grace retains a recently verified identity during absent/poor-quality observations. Grace never extends itself or resets the absence deadline; fresh consecutive owner observations are required to renew verification. Clear nonmatches and camera/model errors revoke controls immediately. A fresh status observation is required at least every 800 ms; retaining an old snapshot cannot extend authorization. Model errors are distinguished from camera errors.
+
+UNENROLLED and PAUSED cannot lock or issue gestures. Camera failures follow lock-after-timeout or alert-only policy. Strict privacy treats additional unknown faces as missing owner. Actual secure-desktop detection suppresses controls, releases capture and requires verification after unlock. Context changes revoke outstanding command epochs before queued work proceeds. Toggling preview visibility does not reset the absence timer.
+
+A lock request latches until an observed session transition or authorized reset/pause/restart. In simulation it deliberately stays LOCK_PENDING; this demonstrates one lock decision per absence without repeated requests. Failed API calls report an error and retry with a delay.
+
+Gesture geometry operates on 21 landmarks with aspect-corrected coordinates. Finger bend angles, wrist-relative extension and normalized thumb/index distance classify L, fist and pinch. Ambiguous handedness, invalid geometry, low confidence and conflicting gestures produce no action. A visible confidently neutral hand for three observations rearms commands. No-hand frames do not rearm. Changes of Office target or verification revoke the current candidate. L holds require at least 180 ms; exit gestures at least 450 ms; all require frame validation and cooldown.
+
+All gesture actions require a fresh authorized state (including a bounded configured grace), an unlocked desktop, enabled controls and no additional visible face. A hand may be acted on during a brief zero-face grace; that is an explicit availability/security tradeoff. Set verification grace to zero for immediate dropout rejection. Hand inference cannot attribute a hand to a person, including an off-camera person.
+
+## Local security and persistence
+
+SQLite blobs containing configuration, enrollment and recovery hash are protected by Windows DPAPI with UI forbidden and current-user scope. The recovery secret uses a random salt and scrypt N=16384/r=8/p=1. Verification uses constant-time digest comparison and in-process exponential failure backoff capped at 60 seconds. Protected changes request the passphrase each time; being passively VERIFIED alone does not authorize destructive configuration changes. The passphrase is never logged or used as a Windows credential. Process memory may retain Python strings temporarily; secure zeroization is not guaranteed.
+
+The project intentionally uses YuNet/SFace instead of InsightFace's default pretrained packs because their model redistribution terms are explicitly published (MIT and Apache 2.0 respectively). OpenCV DNN CPU runs the ONNX models without an extra ONNX Runtime dependency. The substitution is documented and actual model initialization/inference is tested. InsightFace is not silently replaced by fake recognition.
+
+There is no defense against an attacker already running code as the same Windows account, modifying source, editing startup, killing the process, swapping the camera input, or deleting application data. DPAPI protects data at rest against other accounts/offline reading within Windows' threat model; it is not a trusted execution boundary against the logged-in account. Windows Hello/password/PIN remain the authentication boundary for workstation unlock.
+
+## Recoverable failures
+
+Capture reopens unavailable cameras; old or frozen feeds fail closed. Per-frame face/hand exceptions are reported and the next frame can recover. Delayed face inference cannot silently authorize stale frames. Fatal initialization failures leave the GUI/watchdog alive. COM exceptions cancel commands and retry discovery. Native driver/model/COM calls can still block indefinitely; helper joins have bounded waits, but Python cannot safely terminate those native calls. Whole-process failure requires external recovery; no in-process watchdog survives a dead process.
