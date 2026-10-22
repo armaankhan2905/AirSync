@@ -1,5 +1,7 @@
 # Implementation and verification record
 
+**2026-10-22 Air Writing update:** the current source passes **306 tests**, including 70 new tests for gesture arbitration, calibration, temporary per-slide ink, strict input authorization, overlay rendering and Office integration. See [AIR_WRITING.md](AIR_WRITING.md) for details and the unperformed Windows webcam/PowerPoint checklist. All results below are historical baselines.
+
 **2026-10-22 persistent multi-user update:** the current source passes **236 tests**. See [PERSISTENT_USERS.md](PERSISTENT_USERS.md) for storage migration, administrative registration, automatic recognition, backend Office permissions, separate workstation trust, GUI renders and manual Windows checks. Historical single-owner/dashboard results below describe earlier implementations.
 
 **2026-10-22 blur-rejection follow-up:** the current source passes **176 tests** after separating live/enrollment focus requirements and fixing incomplete challenge resets during brief quality dropouts. See [FACE_QUALITY_REPAIR.md](FACE_QUALITY_REPAIR.md) for numeric camera evidence, security-preserving behavior and remaining end-to-end checks.

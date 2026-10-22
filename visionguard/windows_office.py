@@ -84,3 +84,11 @@ def inventory():
     return {"processes": names, "installed": installed_office(),
             "PowerPoint": "POWERPNT.EXE" in names.values(),
             "Word": "WINWORD.EXE" in names.values()}
+def slideshow_client_rect(hwnd):
+    """Physical pixels in the caller's per-monitor DPI context, no window titles."""
+    import win32gui
+    if not win32gui.IsWindow(hwnd) or not win32gui.IsWindowVisible(hwnd) or win32gui.IsIconic(hwnd):
+        raise ValueError("Slideshow window unavailable")
+    left, top, right, bottom = win32gui.GetClientRect(hwnd)
+    x, y = win32gui.ClientToScreen(hwnd, (left, top))
+    return x, y, right - left, bottom - top

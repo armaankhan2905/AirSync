@@ -21,6 +21,7 @@ from .security import LockManager, Observation, State, session_locked
 from .state import StateManager
 from .recognition import RecognitionDirectory, public_user
 from .users import RegistrationError
+from .air_writing import AirWriting
 
 log = logging.getLogger(__name__)
 
@@ -46,8 +47,13 @@ class VisionWorker(QThread):
         self.session_is_locked = False
         self.paused = False
         self.enrolling = None
+        self.air = AirWriting(self.settings)
+        self.calibration_preview = False
+        self._hand_sample = None
+        self._last_air_feedback = ("", -1e9)
         self.office = OfficeWorker(permit=self.permit, state=self.state, on_result=self.publish_command_result,
-                                   authorize_target=lambda app: self.permit(app))
+                                   authorize_target=lambda app: self.permit(app),
+                                   allow_command=self.allow_office_command)
         self.multi_user = database.users.has_users() or not len(database.embeddings())
         self.directory = RecognitionDirectory(database.users, self.settings)
         self.registration_request = None
@@ -95,7 +101,45 @@ class VisionWorker(QThread):
         return True
 
     def invalidate(self, reason, *, preserve_presence=False):
+        self.air.suspend(disable=True)
         self.state.context(reason=reason, preserve_presence=preserve_presence)
+
+    def allow_office_command(self, app, command):
+        with self.air.lock:
+            return not (app == "PowerPoint" and command in {"next", "previous"} and self.air.mode)
+
+    def writing_permit(self):
+        snapshot = self.state.snapshot()
+        identity = snapshot.identity_decision or snapshot.decision
+        # Presence grace is useful for security continuity but never authorizes ink.
+        return (self.permit("PowerPoint") and snapshot.face_count == 1 and snapshot.camera == "Connected"
+                and snapshot.face_status == "matched" and not identity.in_grace)
+
+    def writing_housekeeping(self):
+        now = time.monotonic()
+        contexts, at, known = self.office.slide_snapshot()
+        self.air.reconcile(contexts, now, known=known and now - at <= .25)
+        if not self.writing_permit() or self.office.current_slide(now) is None:
+            self.air.suspend(disable=True)
+
+    def calibration_sample(self):
+        sample = self._hand_sample
+        if sample and time.monotonic() - sample[1] <= .2 and self.writing_permit():
+            return sample[0]
+        return None
+
+    def request_ink_clear(self, all_slides=False):
+        contexts, at, known = self.office.slide_snapshot()
+        selected = self.air.snapshot()["context"]
+        current = contexts[0] if len(contexts) == 1 else next((c for c in contexts if selected and c.key == selected.key), None)
+        if (not self.writing_permit() or not known or time.monotonic() - at > .25 or not contexts
+                or (not all_slides and current is None)):
+            self.event.emit("Clearing requires a verified user and an identified active slideshow")
+            return False
+        self.command("clear_ink", {"key": current.key if current else None,
+                                   "sessions": tuple(c.session for c in contexts), "epoch": self.state.snapshot().auth_epoch,
+                                   "all": bool(all_slides)})
+        return True
 
     def command(self, name, value=None):
         if name == "cancel_enroll":
@@ -153,6 +197,7 @@ class VisionWorker(QThread):
                 matcher.threshold, matcher.margin = value.recognition_threshold, value.recognition_margin
                 self.challenge.grace = value.verification_grace
                 self.directory.settings = value
+                self.air.configure(value)
                 stabilizer = GestureStabilizer(value.gesture_frames, value.gesture_cooldown, value.gesture_threshold)
             elif name == "enroll":
                 self.enrolling = Enrollment()
@@ -180,6 +225,17 @@ class VisionWorker(QThread):
                 self.state.context(reason="Enrollment cancelled", enrolling=False)
             elif name == "registration_preview":
                 self.registration_preview = bool(value)
+            elif name == "calibration_preview":
+                self.calibration_preview = bool(value)
+                self.air.suspend(disable=True)
+            elif name == "clear_ink":
+                contexts, at, known = self.office.slide_snapshot()
+                same_target = (tuple(c.session for c in contexts) == value["sessions"] if value["all"] else
+                               any(c.key == value["key"] for c in contexts))
+                if (self.writing_permit() and known and time.monotonic() - at <= .25 and same_target
+                        and self.state.snapshot().auth_epoch == value["epoch"]):
+                    self.air.clear(value["key"], all_slides=value["all"])
+                    self.event.emit("Annotations Cleared")
             elif name == "reload":
                 if self.multi_user:
                     self.directory.tracks.clear()
@@ -381,10 +437,42 @@ class VisionWorker(QThread):
             self._last_log = now
         return faces, live, matcher
 
-    def dispatch_gesture(self, detections, stabilizer, now):
+    def dispatch_gesture(self, detections, stabilizer, now, landmarks=None, frame_size=None, captured=None):
         target = self.office.target
         authorized = self.permit(target.app if target.app in {"PowerPoint", "Word"} else None)
-        gesture = stabilizer.update(detections, now, authorized=authorized, context=target.key)
+        point = None
+        if (len(detections) == 1 and detections[0].gesture == Gesture.INDEX and
+                detections[0].confidence >= self.settings.writing_confidence and landmarks and frame_size):
+            w, h = frame_size
+            px, py = landmarks[0][8]
+            point = (px / w, py / h)
+        self._hand_sample = (point, captured or now) if point else None
+        if self.calibration_preview:
+            self.air.suspend(disable=True)
+            stabilizer.reset()
+            return
+        slide = self.office.current_slide(now) if target.app == "PowerPoint" else None
+        if self.settings.writing_enabled and target.app == "PowerPoint" and slide is not None:
+            # The same arbiter owns toggle, clear, draw, navigation and exit.
+            # No independent navigation stabilizer can fire alongside drawing.
+            authorized = self.writing_permit() and not self.calibration_preview
+            if captured is not None and now - captured > .2:
+                authorized = False
+            gesture = self.air.update(detections, point, now, context=slide, authorized=authorized,
+                                      epoch=self.state.snapshot().auth_epoch)
+            stabilizer.reset()
+            stabilizer = self.air
+            if self.air.feedback:
+                message, at = self._last_air_feedback
+                if self.air.feedback != message or now - at > 2:
+                    self.event.emit(self.air.feedback)
+                    self._last_air_feedback = self.air.feedback, now
+        else:
+            self.air.suspend(disable=True)
+            gesture = stabilizer.update(detections, now, authorized=authorized, context=target.key)
+            if (self.settings.writing_enabled and target.app == "PowerPoint" and
+                    any(d.gesture == Gesture.THREE_FINGERS for d in detections)):
+                stabilizer.reason = "Air Writing needs a focused slideshow with current slide information"
         active = [d for d in detections if d.gesture != Gesture.NEUTRAL]
         reason = (self.state.denial_reason(app=target.app) or "User authorization changed" if not authorized else
                   target.status if not target.ready else stabilizer.reason if not gesture else "")
@@ -437,6 +525,7 @@ class VisionWorker(QThread):
             while not self.stop_event.is_set():
                 tick = time.monotonic()
                 matcher, stabilizer = self._commands(matcher, stabilizer)
+                self.writing_housekeeping()
                 if tick - self.last_progress > 2:
                     self.challenge.reset()
                     self.directory.tracks.clear()
@@ -497,9 +586,10 @@ class VisionWorker(QThread):
                     self.state.update_gesture(hand_error=f"Hand inference failed: {type(exc).__name__}")
                 self.state.update_performance(hand_ms=round((time.monotonic() - started) * 1000, 1),
                                               capture_age_ms=round((tick - captured) * 1000, 1))
-                self.dispatch_gesture(detections, stabilizer, time.monotonic())
+                self.dispatch_gesture(detections, stabilizer, time.monotonic(), landmarks,
+                                      (frame.shape[1], frame.shape[0]), captured)
                 if tick - last_preview >= .1:
-                    if self.settings.preview_visible or self.registration_preview:
+                    if self.settings.preview_visible or self.registration_preview or self.calibration_preview:
                         self.render_preview(mirrored, faces, detections, landmarks)
                     last_preview = tick
                 self.last_progress = time.monotonic()
@@ -510,6 +600,7 @@ class VisionWorker(QThread):
             log.exception("Vision worker failed")
             self.event.emit(self.health_error)
         finally:
+            self.air.suspend(disable=True)
             self.state.context(reason="Worker stopped")
             cleanup = [self.office.stop]
             if self.camera:
@@ -603,6 +694,7 @@ class VisionWorker(QThread):
                 "enrolling": snapshot.enrolling, "gestures_enabled": snapshot.gestures_enabled,
                 "target_ready": office.get("target_ready", False), "gesture_details": gesture,
                 "state": str(identity.state), "remaining": snapshot.decision.remaining,
+                "writing_mode": self.air.mode,
                 "multi_user": self.multi_user, "user": snapshot.identity_user,
                 "identity_in_grace": identity.in_grace, "gesture_access": allowed,
                 "presence_authorized": snapshot.decision.controls_allowed,

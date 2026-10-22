@@ -42,7 +42,15 @@ Use **+ Register User** beside the gear icon. Registration requires the local ad
 
 **Settings → Manage Users** supports roles, per-app access, disabling, deletion, re-enrollment and explicit workstation-presence trust. A presentation user does not automatically gain permission to keep Windows unlocked. Gestures require exactly one verified and permitted person. Existing enrollment migrates into an administrator named **Device Owner**, preserving the recovery credential and face templates.
 
-See [persistent-user guide and manual checks](docs/PERSISTENT_USERS.md). The current suite passes **236 tests**. Physical multi-user/Office behavior remains to be tested, and RGB head-turn liveness cannot guarantee rejection of all photo/video spoofs.
+See [persistent-user guide and manual checks](docs/PERSISTENT_USERS.md). The current suite passes **306 tests**. Physical multi-user/Office behavior remains to be tested, and RGB head-turn liveness cannot guarantee rejection of all photo/video spoofs.
+
+## Air Writing on PowerPoint
+
+Open **Settings → Air Writing** to enable the feature, set pen color/thickness, adjust smoothing and confidence, and calibrate four comfortable reach corners. The main screen remains focused on the camera.
+
+With a verified, permitted user and a focused slideshow, show **two fingers (index + middle)** to rearm, then hold **three fingers (index + middle + ring, thumb/little folded)** for 0.5 seconds to toggle writing. Rearm, then use **only the index finger** to draw. Rearm and hold **all five fingers** for 0.5 seconds to clear only the current slide's ink. Hold gestures fire once until neutral rearming. L navigation is suppressed while writing is on; fist/pinch keep their existing exit mappings.
+
+Ink is a transparent, click-through overlay, stored per slide in memory and discarded when its show closes. PowerPoint content stays unchanged. Face or camera loss stops input immediately. See the [Air Writing guide, implementation details and hardware checklist](docs/AIR_WRITING.md). **Real webcam/PowerPoint verification is still required**; automated checks and screenshots are synthetic.
 
 ## Camera-first interface
 

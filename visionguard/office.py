@@ -5,7 +5,10 @@ import logging
 import queue
 import threading
 import time
-from .windows_office import inventory, window_info
+import uuid
+import hashlib
+from .windows_office import inventory, window_info, slideshow_client_rect
+from .air_writing import SlideContext, fit_slide
 
 log = logging.getLogger(__name__)
 
@@ -136,10 +139,17 @@ class WordController:
 class OfficeWorker:
     """STA-owned COM, bounded dispatch and process-aware Office discovery."""
     def __init__(self, permit=lambda: False, get_foreground=foreground, *, state=None,
-                 get_inventory=inventory, get_window=window_info, on_result=None, authorize_target=None):
+                 get_inventory=inventory, get_window=window_info, on_result=None, authorize_target=None,
+                 allow_command=None, get_slide_rect=slideshow_client_rect):
         self.permit = permit
         self.on_result = on_result
         self.authorize_target = authorize_target or (lambda app: True)
+        self.allow_command = allow_command or (lambda app, command: True)
+        self.get_slide_rect = get_slide_rect
+        self._slides = ()
+        self._slides_at = 0.
+        self._slides_known = False
+        self._show_sessions = {}
         self.get_foreground = get_foreground
         self.state = state
         self.get_inventory, self.get_window = get_inventory, get_window
@@ -158,6 +168,54 @@ class OfficeWorker:
     def target(self):
         with self._lock:
             return self._target
+
+    def slide_snapshot(self):
+        with self._lock:
+            return self._slides, self._slides_at, self._slides_known
+
+    def refresh_slides(self, getter, now=None):
+        """STA-only read of show/slide identity; no presentation modifications."""
+        now = time.monotonic() if now is None else now
+        contexts, sessions = [], {}
+        try:
+            if self.details.get("PowerPoint_running"):
+                app = getter("PowerPoint.Application")
+                windows = app.SlideShowWindows
+                for i in range(1, int(windows.Count) + 1):
+                    win = windows.Item(i)
+                    hwnd = int(win.HWND)
+                    presentation = win.Presentation
+                    fingerprint = hashlib.sha256(str(presentation.FullName).encode()).hexdigest()
+                    identity = (hwnd, fingerprint)
+                    session = self._show_sessions.get(identity, uuid.uuid4().hex)
+                    sessions[identity] = session
+                    slide = win.View.Slide
+                    # Embedded presentations may reuse SlideIDs from the parent.
+                    deck = hashlib.sha256(str(slide.Parent.FullName).encode()).hexdigest()[:16]
+                    size = presentation.PageSetup
+                    rect = fit_slide(self.get_slide_rect(hwnd), float(size.SlideWidth) / float(size.SlideHeight))
+                    contexts.append(SlideContext(session, f"{deck}:{int(slide.SlideID)}", hwnd, rect, now,
+                                                 int(win.View.State) in {1, 2}))
+            with self._lock:
+                self._show_sessions = sessions
+                self._slides, self._slides_at, self._slides_known = tuple(contexts), now, True
+            self.publish(writing_available=bool(contexts), writing_error="")
+        except Exception as exc:
+            # Busy COM must never keep accepting input against an old slide.
+            with self._lock:
+                self._slides_known = False
+            self.publish(writing_available=False,
+                         writing_error=f"Air Writing is waiting for slideshow information ({type(exc).__name__})")
+
+    def current_slide(self, now=None):
+        now = time.monotonic() if now is None else now
+        contexts, observed, known = self.slide_snapshot()
+        target = self.target
+        if not known or now - observed > .25 or target.app != "PowerPoint" or not target.ready:
+            return None
+        if self.get_foreground()[0] != (target.focus_hwnd or target.hwnd):
+            return None
+        return next((c for c in contexts if c.hwnd == target.hwnd and c.visible), None)
 
     @target.setter
     def target(self, value):
@@ -321,6 +379,8 @@ class OfficeWorker:
         allowed = {"PowerPoint": {"previous", "next", "exit"}, "Word": {"previous", "next", "pause", "toggle"}}
         if action not in allowed.get(expected.app, set()):
             return report("Rejected: requested action disabled or invalid", rejected=True)
+        if not self.allow_command(expected.app, action):
+            return report("Writing Mode ON; slide navigation suppressed", rejected=True)
         if now - issued > .8 or issued > now:
             return report("Action cancelled: stale command", rejected=True)
         if not self.permit():
@@ -333,7 +393,7 @@ class OfficeWorker:
             return report("Application changed; action cancelled", rejected=True)
         if isinstance(item, GestureEvent):
             self.last_handled_event = issued
-        guard = lambda: (self.permit() and self.authorize_target(expected.app)
+        guard = lambda: (self.permit() and self.authorize_target(expected.app) and self.allow_command(expected.app, action)
                          and (not self.state or (self.state.permit(app=expected.app) and
                               (not isinstance(item, GestureEvent) or item.auth_epoch == self.state.snapshot().auth_epoch)))
                          and self.get_foreground()[0] == hwnd
@@ -361,7 +421,7 @@ class OfficeWorker:
             pythoncom.CoInitializeEx(pythoncom.COINIT_APARTMENTTHREADED)
             initialized = True
             getter = win32com.client.GetActiveObject
-            next_poll = 0.
+            next_poll = next_slide_poll = 0.
             while not self.stop_event.is_set():
                 now = time.monotonic()
                 if now >= next_poll:
@@ -375,6 +435,9 @@ class OfficeWorker:
                         self.status = self.target.status
                         self.publish(discovery_error=self.status, target="None", target_ready=False)
                     next_poll = now + .35
+                if now >= next_slide_poll:
+                    self.refresh_slides(getter, now)
+                    next_slide_poll = now + .08
                 try:
                     item = self.commands.get(timeout=.05)
                 except queue.Empty:
@@ -383,6 +446,7 @@ class OfficeWorker:
                     # Re-read process/window/COM state immediately before use.
                     self.target = self.detect(getter)
                     self.status = self.dispatch(item, getter, time.monotonic())
+                    self.refresh_slides(getter)
                 except Exception as exc:
                     self.result(f"Office command failed: {type(exc).__name__}; retry after dismissing Office dialogs", rejected=True, event=item)
                 pythoncom.PumpWaitingMessages()

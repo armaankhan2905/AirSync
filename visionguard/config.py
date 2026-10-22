@@ -49,6 +49,14 @@ class Settings:
     start_with_windows: bool = False
     notifications: bool = True
     development_simulation: bool = True
+    writing_enabled: bool = True
+    writing_color: str = "#ff3030"
+    writing_width: float = 4.0
+    writing_smoothing: float = .45
+    writing_confidence: float = .8
+    writing_hold: float = .5
+    writing_indicator: bool = True
+    writing_calibration: list = field(default_factory=lambda: [[.2, .2], [.8, .2], [.8, .8], [.2, .8]])
     mappings: dict = field(default_factory=default_mappings)
 
     def validate(self) -> "Settings":
@@ -59,6 +67,8 @@ class Settings:
             ("verification_grace", 0, 3), ("recognition_hysteresis", 0, .08),
             ("gesture_cooldown", .3, 5), ("gesture_frames", 3, 15),
             ("pinch_ratio", .1, .4),
+            ("writing_width", 1, 20), ("writing_smoothing", 0, 1),
+            ("writing_confidence", .8, .99), ("writing_hold", .5, 2),
         ]:
             value = getattr(self, key)
             if not isinstance(value, (int, float)) or not lo <= value <= hi:
@@ -73,6 +83,11 @@ class Settings:
                 raise ValueError(f"{key} must be boolean")
         if self.camera_policy not in {"lock", "alert"}:
             raise ValueError("Invalid camera failure policy")
+        import re
+        from .air_writing import CoordinateMapper
+        if not isinstance(self.writing_color, str) or not re.fullmatch(r"#[0-9a-fA-F]{6}", self.writing_color):
+            raise ValueError("Invalid pen color")
+        CoordinateMapper(self.writing_calibration)
         allowed = {"PowerPoint": {"previous", "next", "exit", "none"},
                    "Word": {"previous", "next", "pause", "toggle", "none"}}
         for app, mapping in self.mappings.items():

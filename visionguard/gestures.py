@@ -10,6 +10,10 @@ class Gesture(StrEnum):
     RIGHT_L = "RIGHT_L"
     FIST = "FIST"
     PINCH = "PINCH"
+    INDEX = "INDEX"
+    THREE_FINGERS = "THREE_FINGERS"
+    OPEN_PALM = "OPEN_PALM"
+    TWO_FINGERS = "TWO_FINGERS"
     NEUTRAL = "NEUTRAL"
     AMBIGUOUS = "AMBIGUOUS"
 
@@ -62,6 +66,17 @@ def classify(points, hand: str, handedness_confidence: float, *, pinch_ratio=.23
                          min(handedness_confidence, .95), hand)
     if all(folded) and not thumb_out:
         return Detection(Gesture.FIST, min(handedness_confidence, .9), hand)
+    # A folded thumb needs positive geometric evidence, not just !thumb_out.
+    thumb_folded = not thumb_out and np.linalg.norm(p[4] - p[9]) < .85 * scale
+    if all(extended) and thumb_out:
+        return Detection(Gesture.OPEN_PALM, min(handedness_confidence, .95), hand)
+    if thumb_folded:
+        if all(extended[:3]) and folded[3]:
+            return Detection(Gesture.THREE_FINGERS, min(handedness_confidence, .95), hand)
+        if all(extended[:2]) and all(folded[2:]):
+            return Detection(Gesture.TWO_FINGERS, min(handedness_confidence, .95), hand)
+        if extended[0] and all(folded[1:]):
+            return Detection(Gesture.INDEX, min(handedness_confidence, .95), hand)
     return Detection(Gesture.NEUTRAL, handedness_confidence, hand)
 
 
@@ -83,6 +98,11 @@ class GestureStabilizer:
 
     def update(self, detections: list[Detection], now: float, *, authorized: bool,
                context=None) -> Gesture | None:
+        # The existing Office controls retain open-palm neutral rearming.
+        detections = [Detection(Gesture.NEUTRAL, d.confidence, d.hand)
+                      if d.gesture in {Gesture.OPEN_PALM, Gesture.TWO_FINGERS} else
+                      Detection(Gesture.AMBIGUOUS, d.confidence, d.hand)
+                      if d.gesture in {Gesture.INDEX, Gesture.THREE_FINGERS} else d for d in detections]
         if not authorized or context != self.context:
             self.candidate, self.count, self.neutral_count = None, 0, 0
             self.armed = False

@@ -13,13 +13,15 @@ from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox,
     QDoubleSpinBox, QFormLayout, QFrame, QHBoxLayout, QInputDialog,
     QLabel, QLineEdit, QMainWindow, QMenu, QMessageBox, QPushButton,
-    QScrollArea, QSpinBox, QSystemTrayIcon, QTextEdit, QVBoxLayout, QWidget,
+    QScrollArea, QSpinBox, QSystemTrayIcon, QTextEdit, QVBoxLayout, QWidget, QTabWidget,
 )
 from .camera_view import CameraView, ActionToast
 from .config import Settings
 from .runtime import VisionWorker
 from .startup import set_startup
 from .user_dialogs import RegistrationDialog, ManageUsersDialog
+from .writing_overlay import AnnotationOverlay
+from .writing_controls import CalibrationDialog
 
 STYLE = """
 QWidget { background:#0c1422; color:#d9e5f4; font-family:'Segoe UI'; font-size:13px; }
@@ -141,6 +143,7 @@ class MainWindow(QMainWindow):
         self.setWindowIcon(self.icon)
         self.build_ui()
         self.build_tray()
+        self.annotation_overlay = AnnotationOverlay(lambda: self.worker)
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.heartbeat)
         self.timer.start(100)
@@ -153,6 +156,7 @@ class MainWindow(QMainWindow):
         self.settings_dialog = None
         self.registration_dialog = None
         self.manage_users_dialog = None
+        self.calibration_dialog = None
         self.diagnostic_panel = None
         self._diagnostic_updated_at = -1e9
         self.mapping_widgets = {}
@@ -207,6 +211,12 @@ class MainWindow(QMainWindow):
         bottom.addWidget(self.activity, 1)
         self.mode = text_label("", "CompactStatus", False)
         bottom.addWidget(self.mode)
+        self.pen_indicator = text_label("", "CompactStatus", False)
+        self.pen_indicator.setPixmap(QIcon(str(self.asset_root / "assets/pen.svg")).pixmap(18, 18))
+        self.pen_indicator.setAccessibleName("Writing Mode ON")
+        self.pen_indicator.setToolTip("Writing Mode ON")
+        self.pen_indicator.hide()
+        bottom.addWidget(self.pen_indicator)
 
         self.guide = QFrame(self.preview)
         self.guide.setObjectName("Guide")
@@ -356,7 +366,42 @@ class MainWindow(QMainWindow):
         body.addWidget(advanced)
         body.addStretch()
         scroll.setWidget(content)
-        layout.addWidget(scroll, 1)
+        tabs = QTabWidget()
+        tabs.setTabPosition(QTabWidget.TabPosition.West)
+        tabs.addTab(scroll, "General")
+        writing_scroll = QScrollArea()
+        writing_scroll.setWidgetResizable(True)
+        writing_page = QWidget()
+        writing_layout = QVBoxLayout(writing_page)
+        writing_layout.addWidget(text_label("Air Writing", "Title"))
+        writing_layout.addWidget(text_label("Three fingers: toggle · Index: draw · Open palm: clear\n"
+            "Show two fingers (index + middle) to rearm between commands.\n"
+            "Focus a PowerPoint slideshow. Writing pauses on face verification loss.", "Sub"))
+        writing_form = QFormLayout()
+        self.check("writing_enabled", "Enable Air Writing", writing_form)
+        self.choice("writing_color", "Pen color", ["#ff3030", "#ffff00", "#00d9ff", "#ffffff", "#181818"], writing_form)
+        self.widgets["writing_color"].setEditable(True)
+        self.widgets["writing_color"].setCurrentText(self.settings.writing_color)
+        self.number("writing_width", "Pen thickness", writing_form, 1, 20, 1)
+        self.number("writing_smoothing", "Smoothing (0–1)", writing_form, 0, 1, .05)
+        self.number("writing_confidence", "Hand confidence", writing_form, .8, .99, .01)
+        self.number("writing_hold", "Activation hold (seconds)", writing_form, .5, 2, .1)
+        self.check("writing_indicator", "Show writing indicator", writing_form)
+        writing_layout.addLayout(writing_form)
+        self.writing_calibration_draft = [list(p) for p in self.settings.writing_calibration]
+        writing_layout.addWidget(button("Calibrate comfortable reach…", self.calibrate_writing))
+        self.calibration_status = text_label("Four-corner calibration · mirrored camera", "Sub")
+        writing_layout.addWidget(self.calibration_status)
+        writing_layout.addWidget(button("Clear current slide", lambda: self.clear_ink(False)))
+        writing_layout.addWidget(button("Clear all temporary annotations", lambda: self.clear_ink(True)))
+        writing_layout.addWidget(text_label("Clear requires a verified user and an active slideshow.\n"
+            "Ink is temporary and discarded when its slideshow ends. PowerPoint content stays unchanged.", "Sub"))
+        writing_layout.addStretch()
+        writing_scroll.setWidget(writing_page)
+        tabs.addTab(writing_scroll, "Air Writing")
+        tabs.currentChanged.connect(lambda index: dialog.resize(540 if index else 490,
+            min(800 if index else 640, dialog.screen().availableGeometry().height() - 60)))
+        layout.addWidget(tabs, 1)
         footer = QHBoxLayout()
         footer.addWidget(button("Pause / resume…", self.toggle_pause))
         footer.addWidget(button("Exit…", self.exit_application))
@@ -371,12 +416,38 @@ class MainWindow(QMainWindow):
         dialog.show()
 
     def settings_closed(self, result):
+        if self.calibration_dialog:
+            self.calibration_dialog.reject()
         dialog, self.settings_dialog = self.settings_dialog, None
         self.widgets = {}
         self.mapping_widgets = {}
         self.diagnostic_panel = None
         if dialog:
             dialog.deleteLater()
+
+    def calibrate_writing(self):
+        if not self.worker or not self.worker.writing_permit():
+            self.error("Verify your face and enable gesture control before calibrating.")
+            return
+        if self.calibration_dialog:
+            self.calibration_dialog.raise_()
+            return
+        dialog = CalibrationDialog(self.worker, self.settings_dialog)
+        self.calibration_dialog = dialog
+
+        def finished(result):
+            if result == QDialog.DialogCode.Accepted:
+                self.writing_calibration_draft = dialog.corners
+                self.calibration_status.setText("Calibration ready · Save settings to apply")
+            self.calibration_dialog = None
+            dialog.deleteLater()
+
+        dialog.finished.connect(finished)
+        dialog.show()
+
+    def clear_ink(self, all_slides=False):
+        if not self.worker or not self.worker.request_ink_clear(all_slides):
+            self.error("Verify your face and select a PowerPoint slideshow before clearing ink.")
 
     def settings_enrollment(self):
         if self.open_manage_users() and self.settings_dialog:
@@ -650,6 +721,8 @@ class MainWindow(QMainWindow):
 
     def save_settings(self):
         candidate = asdict(self.settings)
+        if hasattr(self, "writing_calibration_draft"):
+            candidate["writing_calibration"] = self.writing_calibration_draft
         for key, widget in self.widgets.items():
             candidate[key] = widget.isChecked() if isinstance(widget, QCheckBox) else widget.currentText() if isinstance(widget, QComboBox) else widget.value()
         for (app, gesture), widget in self.mapping_widgets.items():
@@ -736,6 +809,8 @@ class MainWindow(QMainWindow):
                 self.preview.set_image(image)
             if self.registration_dialog:
                 self.registration_dialog.preview.set_image(image)
+            if self.calibration_dialog:
+                self.calibration_dialog.preview.set_image(image)
 
     def on_status(self, values):
         if "worker_id" in values:
@@ -749,6 +824,7 @@ class MainWindow(QMainWindow):
         previous = self.last_status.copy()
         self.last_status.update(values)
         status = self.last_status
+        self.pen_indicator.setVisible(self.settings.writing_indicator and status.get("writing_mode", False))
         if (self.diagnostic_panel is not None and self.diagnostic_panel.isVisible()
                 and "diagnostics" in status and time.monotonic() - self._diagnostic_updated_at >= .5):
             self.diagnostic_panel.setPlainText(json.dumps(status["diagnostics"], indent=2, ensure_ascii=False))
@@ -899,6 +975,8 @@ class MainWindow(QMainWindow):
                 self.on_image(preview)
 
     def add_event(self, text):
+        if text in {"Writing Mode ON", "Writing Mode OFF", "Annotations Cleared"}:
+            self.toast.present("AIR WRITING", text, True)
         logging.getLogger("visionguard.activity").info(text)
         self.events.append(f"{datetime.now():%H:%M:%S}  {text}")
         self.events = self.events[-5:]
@@ -930,6 +1008,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         if self.exiting or self.smoke:
+            self.annotation_overlay.shutdown()
             event.accept()
         elif self.settings.minimize_to_tray and self.tray.isVisible():
             self.hide()
